@@ -1,0 +1,429 @@
+@import 'tailwindcss';
+
+@source '../index.html';
+@source '../src';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Design tokens. Semantic names only, so theming is one override block.
+   --------------------------------------------------------------------------- */
+:root {
+  --c-canvas: #faf9f7;
+  --c-surface: #ffffff;
+  --c-surface-2: #f3f1ec;
+  --c-line: #e7e2da;
+  --c-line-strong: #d5cec3;
+  --c-fg: #191713;
+  --c-muted: #6d675d;
+  --c-accent: #5847e0;
+  --c-accent-contrast: #ffffff;
+  --c-accent-soft: #ece9ff;
+  --c-danger: #c02626;
+  --c-danger-soft: #fdecec;
+  --c-success: #1a7f4b;
+  --c-shadow: 220 20% 40%;
+  --aura-1: #6759ff;
+  --aura-2: #22b8cf;
+  --aura-3: #ff8a5b;
+  --aura-opacity: 0.18;
+}
+
+.dark {
+  --c-canvas: #0b0b0d;
+  --c-surface: #131316;
+  --c-surface-2: #1b1b20;
+  --c-line: #2a2a31;
+  --c-line-strong: #3a3a44;
+  --c-fg: #eceaf1;
+  --c-muted: #9b9aa6;
+  --c-accent: #a79cff;
+  --c-accent-contrast: #16121f;
+  --c-accent-soft: #241f3d;
+  --c-danger: #ff8a8a;
+  --c-danger-soft: #351c1c;
+  --c-success: #58d39b;
+  --c-shadow: 260 40% 2%;
+  --aura-1: #7a6bff;
+  --aura-2: #38c6dd;
+  --aura-3: #ff9d6b;
+  --aura-opacity: 0.26;
+}
+
+@theme inline {
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-muted);
+  --color-accent: var(--c-accent);
+  --color-accent-contrast: var(--c-accent-contrast);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-success: var(--c-success);
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Fraunces', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --radius-card: 1rem;
+  --radius-bubble: 1.25rem;
+
+  --shadow-soft: 0 1px 2px hsl(var(--c-shadow) / 0.06), 0 8px 24px -12px hsl(var(--c-shadow) / 0.18);
+  --shadow-pop: 0 12px 40px -12px hsl(var(--c-shadow) / 0.35), 0 2px 6px hsl(var(--c-shadow) / 0.08);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  * {
+    border-color: var(--c-line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--c-canvas);
+    color: var(--c-fg);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv05' 1, 'ss01' 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+  }
+
+  ::selection {
+    background-color: var(--c-accent-soft);
+    color: var(--c-fg);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  button,
+  [role='button'] {
+    cursor: pointer;
+  }
+
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--c-line-strong) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: var(--c-line-strong);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .pb-safe {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+  .pt-safe {
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+  }
+
+  .animate-in {
+    animation: fade-rise 220ms var(--ease-out-soft) both;
+  }
+  .animate-in-fast {
+    animation: fade-rise 150ms var(--ease-out-soft) both;
+  }
+  .animate-pop {
+    animation: pop-in 180ms var(--ease-out-soft) both;
+  }
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   The one creative flourish: a soft aura that drifts, then breathes while the
+   model streams. Pure CSS, GPU-friendly, and it fades out when idle.
+   --------------------------------------------------------------------------- */
+.aura {
+  position: absolute;
+  inset: -38% -12% -34% -12%;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(38px);
+  background:
+    radial-gradient(38% 55% at 22% 45%, var(--aura-1) 0%, transparent 70%),
+    radial-gradient(34% 50% at 52% 62%, var(--aura-2) 0%, transparent 72%),
+    radial-gradient(30% 46% at 78% 40%, var(--aura-3) 0%, transparent 70%);
+  transition: opacity 400ms var(--ease-out-soft);
+  will-change: opacity, transform;
+}
+
+.aura[data-state='idle'] {
+  opacity: calc(var(--aura-opacity) * 0.45);
+  animation: aura-drift 22s linear infinite;
+}
+
+.aura[data-state='active'] {
+  opacity: var(--aura-opacity);
+  animation:
+    aura-drift 9s linear infinite,
+    aura-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes aura-drift {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.06);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes aura-breathe {
+  0%,
+  100% {
+    filter: blur(38px) saturate(1);
+  }
+  50% {
+    filter: blur(30px) saturate(1.35);
+  }
+}
+
+/* Blinking caret shown while text is still arriving. */
+.stream-caret::after {
+  content: '';
+  display: inline-block;
+  width: 0.5ch;
+  height: 1.05em;
+  margin-left: 0.1em;
+  vertical-align: -0.15em;
+  background-color: currentColor;
+  opacity: 0.65;
+  border-radius: 1px;
+  animation: caret-blur 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blur {
+  0%,
+  45% {
+    opacity: 0.7;
+  }
+  55%,
+  100% {
+    opacity: 0.1;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Markdown
+   --------------------------------------------------------------------------- */
+.md {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.md > * + * {
+  margin-top: 0.85em;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin-top: 1.5em;
+}
+.md h1 {
+  font-size: 1.45em;
+}
+.md h2 {
+  font-size: 1.25em;
+}
+.md h3 {
+  font-size: 1.1em;
+}
+.md h4 {
+  font-size: 1em;
+}
+.md a {
+  color: var(--c-accent);
+  text-underline-offset: 2px;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in oklab, var(--c-accent) 40%, transparent);
+}
+.md a:hover {
+  text-decoration-color: currentColor;
+}
+.md strong {
+  font-weight: 600;
+}
+.md ul,
+.md ol {
+  padding-left: 1.35em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li + li {
+  margin-top: 0.3em;
+}
+.md li::marker {
+  color: var(--c-muted);
+}
+.md blockquote {
+  border-left: 2px solid var(--c-line-strong);
+  padding-left: 0.9em;
+  color: var(--c-muted);
+  font-style: italic;
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--c-line);
+}
+.md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875em;
+  display: block;
+  overflow-x: auto;
+}
+.md th,
+.md td {
+  border: 1px solid var(--c-line);
+  padding: 0.4em 0.65em;
+  text-align: left;
+}
+.md th {
+  background-color: var(--c-surface-2);
+  font-weight: 600;
+}
+.md :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background-color: var(--c-surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: 5px;
+  padding: 0.12em 0.35em;
+  white-space: break-spaces;
+}
+.md pre {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  tab-size: 2;
+}
+.md pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* highlight.js tokens, mapped onto our palette so both themes stay AA. */
+.hljs {
+  color: var(--c-fg);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--c-muted);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-built_in,
+.hljs-name {
+  color: color-mix(in oklab, var(--c-accent) 82%, var(--c-fg));
+}
+.hljs-string,
+.hljs-attr,
+.hljs-addition,
+.hljs-regexp {
+  color: var(--c-success);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: color-mix(in oklab, var(--aura-3) 62%, var(--c-fg));
+}
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title,
+.hljs-type {
+  color: color-mix(in oklab, var(--aura-2) 66%, var(--c-fg));
+  font-weight: 600;
+}
+.hljs-deletion {
+  color: var(--c-danger);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 700;
+}
