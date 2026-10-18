@@ -30,6 +30,14 @@ export interface ModelEntry {
   maxOutput?: number;
   tags?: ModelTag[];
   notes?: string;
+  /**
+   * In-browser models only: the one-time download of the quantized weights, in
+   * MB, and the GPU memory the runtime needs while it runs. Both are taken from
+   * WebLLM's own model records and the published weight files, so the picker can
+   * say what a model costs before the user commits to it. Rounded for display.
+   */
+  downloadMB?: number;
+  memoryMB?: number;
   /** Runtime capability gate. The picker greys the model out if unmet. */
   requires?: 'webgpu' | 'free-proxy';
   /** For provider: 'custom' only. */
@@ -41,8 +49,40 @@ export interface ModelEntry {
 export const MODELS: ModelEntry[] = [
   // ---------------------------------------------------------------------------
   // This browser (WebLLM) — zero setup, nothing leaves the device.
-  // Weights download once (~0.7-4.6 GB) and are cached by the browser.
+  // Every ID below exists in the installed WebLLM's prebuilt list; the picker
+  // hides any that does not. Weights download once and are then cached.
+  // Sorted smallest first, so the list doubles as a "what will my machine run"
+  // ladder: `downloadMB` is the one-time download, `memoryMB` the GPU memory the
+  // runtime needs. Both are shown in the picker.
   // ---------------------------------------------------------------------------
+  {
+    id: 'SmolLM2-360M-Instruct-q4f16_1-MLC',
+    provider: 'browser',
+    label: 'SmolLM2 360M (in-browser)',
+    accessMode: 'free-default',
+    contextWindow: 4096,
+    maxOutput: 1024,
+    tags: ['free', 'local', 'fast'],
+    requires: 'webgpu',
+    downloadMB: 207,
+    memoryMB: 376,
+    notes:
+      'The lightest option: ~210 MB download and ~380 MB of GPU memory. Fine for short, simple answers; it struggles with reasoning. Needs the shader-f16 WebGPU feature.',
+  },
+  {
+    id: 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC',
+    provider: 'browser',
+    label: 'Qwen2.5 0.5B (in-browser)',
+    accessMode: 'free-default',
+    contextWindow: 4096,
+    maxOutput: 1024,
+    tags: ['free', 'local', 'fast'],
+    requires: 'webgpu',
+    downloadMB: 290,
+    memoryMB: 945,
+    notes:
+      '~290 MB download but ~950 MB of GPU memory, because this family reserves a large context window by default. Punches above its weight at short tasks.',
+  },
   {
     id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
     provider: 'browser',
@@ -53,7 +93,9 @@ export const MODELS: ModelEntry[] = [
     tags: ['free', 'local', 'fast'],
     requires: 'webgpu',
     recommended: true,
-    notes: 'Needs WebGPU and a one-time ~0.7 GB download. Best for short answers.',
+    downloadMB: 705,
+    memoryMB: 879,
+    notes: 'Needs WebGPU and a one-time ~710 MB download. Best all-round balance for short answers.',
   },
   {
     id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',
@@ -64,7 +106,37 @@ export const MODELS: ModelEntry[] = [
     maxOutput: 2048,
     tags: ['free', 'local'],
     requires: 'webgpu',
-    notes: 'One-time ~1.0 GB download. Slightly better writing than Llama 1B.',
+    downloadMB: 880,
+    memoryMB: 1630,
+    notes: 'One-time ~880 MB download, ~1.6 GB of GPU memory. Slightly better writing than Llama 1B.',
+  },
+  {
+    id: 'SmolLM2-1.7B-Instruct-q4f16_1-MLC',
+    provider: 'browser',
+    label: 'SmolLM2 1.7B (in-browser)',
+    accessMode: 'free-default',
+    contextWindow: 4096,
+    maxOutput: 2048,
+    tags: ['free', 'local'],
+    requires: 'webgpu',
+    downloadMB: 966,
+    memoryMB: 1774,
+    notes:
+      '~970 MB download, ~1.8 GB of GPU memory. Follows instructions well for its size. Needs the shader-f16 WebGPU feature.',
+  },
+  {
+    id: 'gemma-2-2b-it-q4f16_1-MLC',
+    provider: 'browser',
+    label: 'Gemma 2 2B (in-browser)',
+    accessMode: 'free-default',
+    contextWindow: 4096,
+    maxOutput: 2048,
+    tags: ['free', 'local'],
+    requires: 'webgpu',
+    downloadMB: 1493,
+    memoryMB: 1895,
+    notes:
+      '~1.5 GB download, ~1.9 GB of GPU memory. The strongest writer in this group. Needs the shader-f16 WebGPU feature.',
   },
   {
     id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
@@ -75,7 +147,9 @@ export const MODELS: ModelEntry[] = [
     maxOutput: 2048,
     tags: ['free', 'local'],
     requires: 'webgpu',
-    notes: 'One-time ~1.8 GB download. Noticeably slower on integrated GPUs.',
+    downloadMB: 1817,
+    memoryMB: 2264,
+    notes: 'One-time ~1.8 GB download, ~2.3 GB of GPU memory. Noticeably slower on integrated GPUs.',
   },
 
   // ---------------------------------------------------------------------------

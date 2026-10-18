@@ -12,6 +12,29 @@ dist/
 .env
 .env.*
 !.env.example
+# Build modes for the native shells. They carry no secrets (only which optional
+# features are switched off), and the builds are not reproducible without them.
+!.env.desktop
+!.env.android
+
+# Secrets: nothing key-shaped belongs in the repo.
+*.keystore
+*.jks
+*.p12
+*.pfx
+keystore.properties
+
+# Desktop packaging output (electron-builder)
+release/
+dist-electron/
+
+# Android platform build output. The generated `android/` project IS committed
+# (Capacitor expects it); only its build products and local machine config are not.
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
 
 # Logs
 logs/
@@ -28,6 +51,7 @@ pnpm-debug.log*
 *.swp
 .DS_Store
 Thumbs.db
+*.lnk
 
 # Test / coverage output
 coverage/

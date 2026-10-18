@@ -3,16 +3,66 @@
  *
  * This is the only provider with a genuine one-click connect: the user authorises
  * once and OpenRouter mints an API key they own and can revoke. No client secret
- * exists, which is exactly why PKCE works from a pure browser app.
+ * exists, which is exactly why PKCE works from a client app.
+ *
+ * On the web the flow returns to the same page with `?code=`. In the desktop and
+ * Android shells it opens the real browser (an embedded webview would be blocked
+ * and would also see the user's provider password) and comes back via a redirect
+ * URI: a loopback `http://127.0.0.1:…` for Electron, or a claimed HTTPS App Link
+ * on Android when `VITE_OAUTH_REDIRECT` points at one. A custom scheme redirect
+ * (`chatbot://oauth/callback`) is the documented Capacitor fallback, but OpenRouter
+ * documents HTTPS and `localhost`/`127.0.0.1` loopbacks, not arbitrary scheme
+ * redirects, so a loopback listener is the one redirect that is certain to work.
  *
  * Everything else in the app says "use an API key instead" rather than showing a
  * Connect button that cannot work.
  */
 
+import { shellFetch } from './native/http';
+import { closeExternalBrowser, oauthRedirectUri, onOAuthRedirect, openExternalUrl, parseOAuthRedirect } from './native/deeplink';
+import { isNativeShell } from './native/platform';
+import { dropOAuthValue, readOAuthValue, stashOAuthValue } from './native/secrets';
+
 const AUTH_URL = 'https://openrouter.ai/auth';
 const EXCHANGE_URL = 'https://openrouter.ai/api/v1/auth/keys';
-const VERIFIER_KEY = 'chatbot.oauth.openrouter.verifier';
-const STATE_KEY = 'chatbot.oauth.openrouter.state';
+
+/**
+ * The PKCE verifier and CSRF state are short-lived secrets. On the web they live
+ * in sessionStorage (gone with the tab, never shared). A native app can be
+ * killed while the browser is in front, so there they also go to the platform
+ * secret store, which is the only place that survives that without being
+ * readable by anything else on the device.
+ */
+const TRANSIENT = { verifier: 'openrouter.verifier', state: 'openrouter.state' } as const;
+
+async function stashTransient(name: string, value: string): Promise<void> {
+  try {
+    sessionStorage.setItem(`chatbot.oauth.${name}`, value);
+  } catch {
+    /* session storage can be blocked; the secret store below still has it */
+  }
+  if (isNativeShell()) await stashOAuthValue(name, value);
+}
+
+async function takeTransient(name: string): Promise<string | null> {
+  let value: string | null = null;
+  try {
+    value = sessionStorage.getItem(`chatbot.oauth.${name}`);
+  } catch {
+    value = null;
+  }
+  if (!value && isNativeShell()) value = await readOAuthValue(name);
+  return value;
+}
+
+async function clearTransient(name: string): Promise<void> {
+  try {
+    sessionStorage.removeItem(`chatbot.oauth.${name}`);
+  } catch {
+    /* nothing to clear */
+  }
+  if (isNativeShell()) await dropOAuthValue(name);
+}
 
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';
@@ -31,35 +81,30 @@ async function s256Challenge(verifier: string): Promise<string> {
   return base64UrlEncode(new Uint8Array(digest));
 }
 
-function callbackUrl(): string {
-  return `${window.location.origin}${window.location.pathname}`;
-}
-
-/** Leaves the app for OpenRouter. We come back to the same URL with ?code=. */
+/** Leaves the app for OpenRouter, by the most appropriate route for the shell. */
 export async function startOpenRouterConnect(): Promise<void> {
   const verifier = randomString();
   const state = randomString(16);
   const challenge = await s256Challenge(verifier);
-  try {
-    sessionStorage.setItem(VERIFIER_KEY, verifier);
-    sessionStorage.setItem(STATE_KEY, state);
-  } catch {
-    // Session storage can be blocked. The verifier is then only good for this
-    // exact page life, which is all the flow needs anyway.
-  }
+  await stashTransient(TRANSIENT.verifier, verifier);
+  await stashTransient(TRANSIENT.state, state);
 
   const url = new URL(AUTH_URL);
-  url.searchParams.set('callback_url', callbackUrl());
+  url.searchParams.set('callback_url', oauthRedirectUri());
   url.searchParams.set('code_challenge', challenge);
   url.searchParams.set('code_challenge_method', 'S256');
   url.searchParams.set('state', state);
   url.searchParams.set('key_label', 'Chatbot');
+
+  // Native shells hand off to the real browser and wait for the deep link.
+  if (await openExternalUrl(url.toString())) return;
   window.location.assign(url.toString());
 }
 
-export function isOpenRouterCallback(): boolean {
-  const params = new URLSearchParams(window.location.search);
-  return params.has('code') && window.location.pathname.length >= 0;
+/** True when the given URL (or the current one) carries an OpenRouter code. */
+export function isOpenRouterCallback(url?: string): boolean {
+  const redirect = parseOAuthRedirect(url ?? window.location.href);
+  return Boolean(redirect.code || redirect.error);
 }
 
 export interface OpenRouterAuthResult {
@@ -67,32 +112,31 @@ export interface OpenRouterAuthResult {
   logsUrl: string;
 }
 
-/** Runs on boot when OpenRouter sent us back. Returns null when there is no code. */
-export async function completeOpenRouterConnect(): Promise<OpenRouterAuthResult | null> {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get('code');
+/**
+ * Runs on boot when OpenRouter sent us back, or when a native deep link arrives.
+ * Returns null when there is nothing to complete.
+ */
+export async function completeOpenRouterConnect(rawUrl?: string): Promise<OpenRouterAuthResult | null> {
+  const redirect = parseOAuthRedirect(rawUrl ?? window.location.href);
+  if (redirect.error) {
+    await clearTransient(TRANSIENT.verifier);
+    await clearTransient(TRANSIENT.state);
+    throw new Error(redirect.description || `OpenRouter refused the connection (${redirect.error}).`);
+  }
+  const code = redirect.code;
   if (!code) return null;
 
-  const expectedState = (() => {
-    try {
-      return sessionStorage.getItem(STATE_KEY);
-    } catch {
-      return null;
-    }
-  })();
-  const returnedState = params.get('state');
-  if (expectedState && returnedState && expectedState !== returnedState) {
-    throw new Error('This sign-in link did not come from this tab. Start the connection again.');
+  const expectedState = await takeTransient(TRANSIENT.state);
+  if (expectedState && redirect.state && expectedState !== redirect.state) {
+    throw new Error('This sign-in link did not come from this app. Start the connection again.');
   }
 
-  let verifier: string | null = null;
-  try {
-    verifier = sessionStorage.getItem(VERIFIER_KEY);
-  } catch {
-    verifier = null;
-  }
+  const verifier = await takeTransient(TRANSIENT.verifier);
 
-  const response = await fetch(EXCHANGE_URL, {
+  // Through the shell transport: in the desktop app the browser-facing origin is
+  // not a website, and on Android this is the request that would otherwise be
+  // refused by CORS.
+  const response = await shellFetch(EXCHANGE_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -112,21 +156,28 @@ export async function completeOpenRouterConnect(): Promise<OpenRouterAuthResult 
   const data = (await response.json()) as { key?: string };
   if (!data.key) throw new Error('OpenRouter did not return a key.');
 
-  try {
-    sessionStorage.removeItem(VERIFIER_KEY);
-    sessionStorage.removeItem(STATE_KEY);
-  } catch {
-    /* nothing to clean */
-  }
+  await clearTransient(TRANSIENT.verifier);
+  await clearTransient(TRANSIENT.state);
+  void closeExternalBrowser();
 
-  // Strip the code from the address bar so a reload cannot replay it.
-  params.delete('code');
-  params.delete('state');
-  const query = params.toString();
-  window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  // The code came back in the address bar only on the web; a deep link never
+  // touched it. Strip it so a reload cannot replay it.
+  if (!rawUrl) {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('code');
+    params.delete('state');
+    const query = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  }
 
   const keyHash = await sha256Hex(data.key);
   return { key: data.key, logsUrl: `https://openrouter.ai/logs?api_key_hash=${keyHash}` };
+}
+
+/** Wires the native deep link into the same handler the web callback uses. */
+export async function listenForNativeRedirects(handler: (url: string) => void): Promise<() => void> {
+  if (!isNativeShell()) return () => {};
+  return onOAuthRedirect(handler);
 }
 
 async function sha256Hex(value: string): Promise<string> {

@@ -1,4 +1,5 @@
 import { requireKey } from '../lib/credentials';
+import { shellFetch } from '../lib/native/http';
 import { ProviderError, fromResponse, toProviderError } from './errors';
 import { normalizeConversation } from './messages';
 import { PROVIDERS } from './providers';
@@ -110,7 +111,7 @@ export const geminiProvider: ChatProvider = {
     const apiKey = key();
     let res: Response;
     try {
-      res = await fetch(`${BASE}/models?pageSize=1`, { headers: { 'x-goog-api-key': apiKey }, signal });
+      res = await shellFetch(`${BASE}/models?pageSize=1`, { headers: { 'x-goog-api-key': apiKey }, signal });
     } catch (err) {
       throw toProviderError(err, ENTRY.name);
     }

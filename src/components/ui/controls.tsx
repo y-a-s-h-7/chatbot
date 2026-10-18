@@ -125,8 +125,14 @@ export function Switch({
     >
       <span
         className={cn(
-          'absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white shadow-sm transition-transform duration-200',
-          checked ? 'translate-x-4.75' : 'translate-x-0.5',
+          // The knob is positioned by `left`, never by its static position:
+          // browsers lay a <button>'s contents out in an anonymous centred flex
+          // container, so an absolutely positioned child with no `left` lands in
+          // the middle of the track and then gets translated past its edge (the
+          // knob floated to the right of the switch, over the label).
+          // 40px track, 1px border, 18px knob → 2px inset and 16px of travel.
+          'absolute left-0.5 top-0.5 h-4.5 w-4.5 rounded-full bg-white shadow-sm transition-transform duration-200',
+          checked ? 'translate-x-4' : 'translate-x-0',
         )}
       />
     </button>

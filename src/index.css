@@ -427,3 +427,57 @@
 .hljs-strong {
   font-weight: 700;
 }
+
+/* ---------------------------------------------------------------------------
+   Native shells (Electron window, Android WebView).
+   Everything here is inert on the web: the class is only added by
+   useNativeShell(), which returns immediately unless a shell is detected.
+   --------------------------------------------------------------------------- */
+html.native-shell,
+html.native-shell body {
+  /* visualViewport height: the WebView shrinks for the on-screen keyboard, and
+     this is the number that actually matches what the user can see. */
+  height: var(--app-height, 100%);
+  overscroll-behavior: none;
+}
+
+html.native-shell {
+  /* Notch, status bar and gesture bar. The --safe-area-inset-* variables are
+     injected by the shell where they exist; env() is the browser-native path. */
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  padding-top: var(--safe-top);
+  padding-right: var(--safe-right);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+html.native-shell * {
+  /* Kills the 300 ms click delay without disabling pinch zoom. */
+  touch-action: manipulation;
+}
+
+/* Comfortable hit areas on a touch screen, without changing desktop density. */
+@media (pointer: coarse) {
+  html.native-shell .tap-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* The window is the app: no page-level scrolling or rubber-banding to fight. */
+html.native-shell body {
+  overflow: hidden;
+  user-select: none;
+}
+
+html.native-shell textarea,
+html.native-shell input,
+html.native-shell [contenteditable='true'],
+html.native-shell .selectable {
+  user-select: text;
+}

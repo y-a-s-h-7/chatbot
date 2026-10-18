@@ -36,6 +36,15 @@ export function formatRelativeTime(timestamp: number, now = Date.now()): string 
   return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+/**
+ * Bytes as a human figure. Used for model downloads and GPU memory, where the
+ * number is always an estimate, so it is rounded and prefixed with `~`.
+ */
+export function formatDataSize(mb: number): string {
+  if (mb >= 1000) return `~${(Math.round(mb / 100) / 10).toFixed(1)} GB`;
+  return `~${Math.round(mb / 10) * 10} MB`;
+}
+
 export function formatContextWindow(tokens: number): string {
   if (!tokens) return '';
   if (tokens >= 1_000_000) {

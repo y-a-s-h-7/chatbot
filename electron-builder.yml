@@ -1,0 +1,72 @@
+# Packaging for the Windows desktop app (electron-builder).
+#
+#   npm run build:win       → installer + portable, into release/
+#   npm run build:win:dir   → unpacked folder, for a quick look
+#
+# The renderer is the ordinary `dist/` folder produced by Vite, so everything in
+# `dependencies` is already bundled into it. Only the built app and the Electron
+# entry points are packed — no node_modules, no sources, no source maps.
+
+appId: com.yash7.chatbot
+productName: Chatbot
+copyright: Copyright © 2026
+
+directories:
+  output: release
+  buildResources: build
+
+# `files` replaces electron-builder's default glob, which is what keeps the 250 MB
+# of production node_modules out of the package.
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/*.ts'
+  - '!**/node_modules/**'
+
+asar: true
+compression: normal
+# A deep link has to be registered by the installer, or OAuth cannot return to
+# the app on Windows.
+protocols:
+  - name: Chatbot
+    schemes:
+      - chatbot
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Chatbot
+  # Chats, keys and the model cache live in %APPDATA%/Chatbot. Removing the app
+  # must not silently delete a user's conversations.
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+
+# macOS/Linux are configured so the same command line works if you add them
+# later; only Windows is built by the scripts in this repo.
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+linux:
+  category: Utility
+  target:
+    - AppImage

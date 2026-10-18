@@ -13,16 +13,9 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500&display=swap"
     />
-    <script>
-      // Applied before first paint so the stored theme never flashes.
-      (function () {
-        try {
-          var t = localStorage.getItem('chatbot.theme');
-          var d = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-          document.documentElement.classList.toggle('dark', d);
-        } catch (e) {}
-      })();
-    </script>
+    <!-- Pre-paint theme bootstrap. Kept as a file (not inline) so the CSP needs
+         no inline-script hashes — see scripts/security-headers.mjs. -->
+    <script src="/theme-boot.js"></script>
   </head>
   <body class="h-full">
     <div id="root" class="h-full"></div>

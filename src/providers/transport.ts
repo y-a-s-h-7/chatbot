@@ -3,6 +3,7 @@
  * decoding used by every adapter that speaks that dialect.
  */
 
+import { shellFetch } from '../lib/native/http';
 import { ProviderError, fromResponse, networkError, toProviderError } from './errors';
 
 export interface SseFrame {
@@ -127,7 +128,10 @@ export async function openStream(opts: FetchStreamOptions): Promise<Response> {
   const { url, headers, body, providerLabel, signal, method = 'POST' } = opts;
   let res: Response;
   try {
-    res = await fetch(url, {
+    // shellFetch, not fetch: in the desktop app this goes out through the main
+    // process (real streaming, no CORS), and on Android it falls back to the
+    // native stack for endpoints that refuse a WebView origin.
+    res = await shellFetch(url, {
       method,
       headers: { 'content-type': 'application/json', ...headers },
       body: method === 'GET' ? undefined : JSON.stringify(body),
@@ -162,7 +166,7 @@ export async function safeText(res: Response): Promise<string> {
 export async function getJson<T>(url: string, headers: Record<string, string>, providerLabel: string, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, { headers, signal });
+    res = await shellFetch(url, { headers, signal });
   } catch (err) {
     throw toProviderError(err, providerLabel);
   }

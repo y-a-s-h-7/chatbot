@@ -15,12 +15,13 @@ import { getAvailability, getProvider, modelKey } from '../providers';
 import { ProviderError, toProviderError } from '../providers/errors';
 import type { ModelEntry } from '../providers/models';
 import type { ProviderMessage } from '../providers/types';
-import { unloadBrowserModel } from '../providers/webllm';
+import { purgeBrowserModelCache, unloadBrowserModel } from '../providers/webllm';
 import type { ChatMessage, MessageError } from '../types';
 import { useLiveStore } from './liveStore';
 import { BROWSER_FALLBACK_MODEL, DEFAULT_MODEL_ID, useSettingsStore } from './settingsStore';
 import { useModelStore } from './modelStore';
-import { toastError } from './toastStore';
+import { useMemoryStore, type RememberOutcome } from './memoryStore';
+import { toastError, toastSuccess } from './toastStore';
 
 let activeController: AbortController | null = null;
 
@@ -113,6 +114,26 @@ function resolveEntry(modelId: string): ModelEntry {
       contextWindow: 4096,
     }
   );
+}
+
+/**
+ * What actually goes into the system prompt: the user's own instructions, plus
+ * the memory ground rules and any saved facts. The rules are sent even when
+ * memory is switched off — otherwise a model promises to remember things the app
+ * has stored nowhere, which is the exact lie the memory feature exists to stop.
+ */
+function buildSystemPrompt(userPrompt: string): string {
+  const memory = useMemoryStore.getState().section();
+  return [userPrompt.trim(), memory].filter(Boolean).join('\n\n');
+}
+
+/** The one thing the user needs to know about an explicit "remember that …". */
+function reportMemory(outcome: RememberOutcome): void {
+  if (outcome.kind === 'saved') toastSuccess('Saved to memory', outcome.fact.text);
+  else if (outcome.kind === 'secret')
+    toastError('Not saved', 'That looks like a password or a key. Memory only keeps facts and preferences.');
+  else if (outcome.kind === 'disabled')
+    toastError('Memory is off', 'Turn on “Use memory” in Settings → Memory to save that.');
 }
 
 /** Conversation turns handed to a provider: no errors, no empty placeholders. */
@@ -214,7 +235,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         {
           model: entry.id,
           temperature: settings.temperature,
-          system: settings.systemPrompt || undefined,
+          system: buildSystemPrompt(settings.systemPrompt),
           maxOutputTokens: entry.maxOutput ? Math.min(entry.maxOutput, 4096) : undefined,
         },
         controller.signal,
@@ -377,6 +398,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       useLiveStore.getState().end();
       await clearChatStorage();
       await unloadBrowserModel();
+      await purgeBrowserModelCache();
       const meta = newMeta(useSettingsStore.getState().modelId);
       set({ metas: [meta], messages: { [meta.id]: [] }, activeId: meta.id, hydrated: true });
       scheduleIndexWrite();
@@ -390,6 +412,11 @@ export const useChatStore = create<ChatState>((set, get) => {
       const settings = useSettingsStore.getState();
       const entry = resolveEntry(settings.modelId);
       if (!assertSendable(entry)) return;
+
+      // An explicit "remember that …" is stored before the request goes out, so
+      // the fact in the system prompt and the reply the user reads agree.
+      reportMemory(useMemoryStore.getState().rememberIfAsked(clean));
+
       const conversationId = ensureActive();
       const now = Date.now();
 

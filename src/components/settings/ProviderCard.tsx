@@ -5,8 +5,9 @@ import { MODELS } from '../../providers/models';
 import { PROVIDERS, getProvider, probeFreeProxy } from '../../providers';
 import type { ProviderId } from '../../providers/providers';
 import { toProviderError } from '../../providers/errors';
+import { isNativeShell } from '../../lib/native/platform';
 import { useModelStore } from '../../store/modelStore';
-import { useSettingsStore } from '../../store/settingsStore';
+import { keyStorageLabel, useSettingsStore } from '../../store/settingsStore';
 import { Badge, Button, Switch, TextInput } from '../ui/controls';
 import { AlertIcon, CheckIcon, PlugIcon } from '../icons';
 
@@ -16,6 +17,7 @@ export function ProviderCard({ providerId }: { providerId: ProviderId }) {
   const entry = PROVIDERS[providerId];
   const key = useSettingsStore((state) => state.keys[providerId] ?? '');
   const remember = useSettingsStore((state) => Boolean(state.remember[providerId]));
+  const shellRememberHint = isNativeShell();
   const connected = useSettingsStore((state) => Boolean(state.connected[providerId]));
   const customBaseUrl = useSettingsStore((state) => state.customBaseUrl);
   const ollamaBaseUrl = useSettingsStore((state) => state.ollamaBaseUrl);
@@ -216,8 +218,9 @@ export function ProviderCard({ providerId }: { providerId: ProviderId }) {
             <span className="max-w-[52ch] leading-relaxed">
               Remember on this device
               <span className="block text-muted">
-                Off means the key lives in memory only. On stores it in localStorage, readable by anything running on this
-                origin.
+                {shellRememberHint
+                  ? `Off means the key lives in memory only. On hands it to ${keyStorageLabel()}, where other websites and apps cannot read it.`
+                  : 'Off means the key lives in memory only. On stores it in localStorage, readable by anything running on this origin.'}
               </span>
             </span>
           </label>

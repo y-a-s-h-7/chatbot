@@ -3,19 +3,22 @@ import { cn } from '../../lib/utils';
 import { PROVIDER_ORDER } from '../../providers';
 import { storageMode } from '../../lib/storage';
 import { useChatStore } from '../../store/chatStore';
-import { useSettingsStore } from '../../store/settingsStore';
+import { useMemoryStore } from '../../store/memoryStore';
+import { keyStorageLabel, useSettingsStore } from '../../store/settingsStore';
 import { toastSuccess } from '../../store/toastStore';
 import type { ThemeMode } from '../../lib/theme';
 import { Button, Field, Switch } from '../ui/controls';
 import { Dialog, ConfirmDialog } from '../ui/Dialog';
 import { MoonIcon, SystemIcon, SunIcon } from '../icons';
+import { MemoryPanel } from './MemoryPanel';
 import { ProviderCard } from './ProviderCard';
 
-type Tab = 'providers' | 'chat' | 'appearance' | 'data';
+type Tab = 'providers' | 'chat' | 'memory' | 'appearance' | 'data';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'providers', label: 'Providers' },
   { id: 'chat', label: 'Chat' },
+  { id: 'memory', label: 'Memory' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'data', label: 'Data & privacy' },
 ];
@@ -37,6 +40,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose(): vo
   const metas = useChatStore((state) => state.metas);
   const messages = useChatStore((state) => state.messages);
   const clearEverything = useChatStore((state) => state.clearEverything);
+  const memoryCount = useMemoryStore((state) => state.facts.length);
 
   const messageCount = useMemo(
     () => Object.values(messages).reduce((total, list) => total + list.length, 0),
@@ -147,6 +151,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose(): vo
             </div>
           )}
 
+          {tab === 'memory' && <MemoryPanel />}
+
           {tab === 'appearance' && (
             <div className="space-y-4">
               <Field label="Theme" hint="System follows your operating system setting and keeps following it.">
@@ -190,13 +196,18 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose(): vo
                 <ul className="mt-2 space-y-1.5 text-[12px] leading-relaxed text-muted">
                   <li>
                     <span className="text-fg">API keys</span> —{storedKeyCount > 0 ? ` ${storedKeyCount} provider${storedKeyCount === 1 ? '' : 's'} configured.` : ' none saved.'}{' '}
-                    Remembered keys sit in this browser's localStorage; unticked ones exist only in memory. They are sent
-                    only to the provider that issued them, never to this app's origin.
+                    Remembered keys sit in {keyStorageLabel()}; unticked ones exist only in memory. They are sent only to the
+                    provider that issued them, never to this app's origin.
                   </li>
                   <li>
                     <span className="text-fg">Conversations</span> —{` ${metas.length} chat${metas.length === 1 ? '' : 's'}, ${messageCount} messages `}
                     in {storageMode() === 'indexeddb' ? 'IndexedDB' : 'memory (IndexedDB is unavailable here)'} on this
                     device.
+                  </li>
+                  <li>
+                    <span className="text-fg">Saved facts</span> —{` ${memoryCount} memor${memoryCount === 1 ? 'y' : 'ies'} `}
+                    in this device's local storage, added to the system prompt of every request, so the model provider you
+                    pick can read them. Nothing is saved unless you say “remember that …”.
                   </li>
                   <li>
                     <span className="text-fg">Free tier</span> — if you use the shared free tier, your messages pass
@@ -233,8 +244,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose(): vo
         title="Clear all data?"
         body={
           <>
-            Deletes every conversation from this device, removes all saved API keys and preferences, and frees the
-            in-browser model cache. This cannot be undone.
+            Deletes every conversation from this device, removes all saved API keys and preferences, forgets every saved
+            fact, and frees the in-browser model cache. This cannot be undone.
           </>
         }
         confirmLabel="Delete everything"
@@ -243,6 +254,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose(): vo
         onConfirm={() => {
           void clearEverything().then(() => {
             resetEverything();
+            useMemoryStore.getState().clearAll();
             toastSuccess('All data cleared', 'Nothing is left on this device.');
           });
         }}

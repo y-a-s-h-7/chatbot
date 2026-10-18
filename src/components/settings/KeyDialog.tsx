@@ -3,9 +3,10 @@ import { maskKey } from '../../lib/credentials';
 import { startOpenRouterConnect } from '../../lib/oauth';
 import { PROVIDERS, getProvider } from '../../providers';
 import { toProviderError } from '../../providers/errors';
+import { isNativeShell } from '../../lib/native/platform';
 import type { ProviderId } from '../../providers/providers';
 import { useModelStore } from '../../store/modelStore';
-import { useSettingsStore } from '../../store/settingsStore';
+import { keyStorageLabel, useSettingsStore } from '../../store/settingsStore';
 import { toastSuccess } from '../../store/toastStore';
 import { Button, Field, Switch, TextInput } from '../ui/controls';
 import { Dialog } from '../ui/Dialog';
@@ -25,6 +26,7 @@ interface KeyDialogProps {
 export function KeyDialog({ open, providerId, modelId, onClose }: KeyDialogProps) {
   const storedKey = useSettingsStore((state) => (providerId ? state.keys[providerId] : undefined));
   const rememberPref = useSettingsStore((state) => (providerId ? Boolean(state.remember[providerId]) : false));
+  const nativeRemember = isNativeShell();
   const setKey = useSettingsStore((state) => state.setKey);
   const setStoreRemember = useSettingsStore((state) => state.setRemember);
   const clearKey = useSettingsStore((state) => state.clearKey);
@@ -234,8 +236,10 @@ export function KeyDialog({ open, providerId, modelId, onClose }: KeyDialogProps
             <p className="text-[13px] font-medium text-fg">Remember on this device</p>
             <p className="mt-0.5 text-[12px] leading-relaxed text-muted">
               {remember
-                ? 'The key is saved in this browser’s localStorage so it survives a reload. Anyone with access to this browser profile can read it.'
-                : 'The key stays in memory for this tab only. Nothing is written to disk.'}
+                ? nativeRemember
+                  ? `The key is handed to ${keyStorageLabel()}, so it survives a restart and other apps cannot read it.`
+                  : 'The key is saved in this browser’s localStorage so it survives a reload. Anyone with access to this browser profile can read it.'
+                : 'The key stays in memory for this session only. Nothing is written to disk.'}
             </p>
           </div>
           <Switch

@@ -10,6 +10,7 @@
 import { toChatCompletions } from './messages';
 import { PROVIDERS } from './providers';
 import { ProviderError } from './errors';
+import { formatDataSize } from '../lib/utils';
 import type { ChatProvider, ModelInfo, ProviderMessage, StreamEvent, StreamOptions } from './types';
 import { MODELS } from './models';
 
@@ -17,6 +18,7 @@ const ENTRY = PROVIDERS.browser;
 
 type WebLlmModule = typeof import('@mlc-ai/web-llm');
 type Engine = import('@mlc-ai/web-llm').MLCEngine;
+type AppConfig = import('@mlc-ai/web-llm').AppConfig;
 
 let modulePromise: Promise<WebLlmModule> | null = null;
 let engine: Engine | null = null;
@@ -74,6 +76,67 @@ export async function availableBrowserModels(): Promise<Set<string>> {
   }
 }
 
+/**
+ * Downloads are the one part of this app that is slow and expensive, so the
+ * weights go into IndexedDB rather than the default Cache API store: it survives
+ * a reload, a terminal restart and a dev-server bounce, and it is what
+ * `deleteModelAllInfoInCache` below clears. Every cache query has to be handed
+ * this same config — with the default one it inspects the other store and
+ * reports a false miss, which would re-download the model for no reason.
+ */
+function durableAppConfig(mod: WebLlmModule): AppConfig {
+  return { ...mod.prebuiltAppConfig, cacheBackend: 'indexeddb' };
+}
+
+let persistRequest: Promise<boolean> | null = null;
+
+/**
+ * Asks the browser to keep this origin's storage. Best effort and never throws:
+ * without it a browser under storage pressure is free to evict the weights, and
+ * the next visit starts the download over again.
+ */
+function requestPersistentStorage(): Promise<boolean> {
+  if (!persistRequest) {
+    persistRequest = (async () => {
+      try {
+        if (typeof navigator === 'undefined' || !navigator.storage?.persist) return false;
+        if (await navigator.storage.persisted()) return true;
+        return await navigator.storage.persist();
+      } catch {
+        return false;
+      }
+    })();
+  }
+  return persistRequest;
+}
+
+async function isCached(mod: WebLlmModule, model: string, appConfig: AppConfig): Promise<boolean> {
+  try {
+    return await mod.hasModelInCache(model, appConfig);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The line the user watches for the first few seconds. Saying which of the two
+ * things is happening — reading the cache or pulling hundreds of megabytes over
+ * the network — is the difference between "slow" and "broken".
+ */
+async function loadingMessage(
+  mod: WebLlmModule,
+  model: string,
+  appConfig: AppConfig,
+  persistent: boolean,
+): Promise<string> {
+  const entry = MODELS.find((m) => m.provider === 'browser' && m.id === model);
+  const label = entry ? entry.label.replace(' (in-browser)', '') : model;
+  if (await isCached(mod, model, appConfig)) return `Loading ${label} from the local cache…`;
+  const size = entry?.downloadMB ? formatDataSize(entry.downloadMB) : 'a few hundred megabytes';
+  const caveat = persistent ? '' : ' Your browser may clear it again when storage runs low.';
+  return `Downloading ${label} once (${size}) — it is kept on this device, so this only happens the first time.${caveat}`;
+}
+
 async function ensureEngine(model: string, signal: AbortSignal): Promise<Engine> {
   requireWebGpu();
   const mod = await loadModule();
@@ -87,7 +150,12 @@ async function ensureEngine(model: string, signal: AbortSignal): Promise<Engine>
 
   if (loadingPromise) await loadingPromise;
 
+  const appConfig = durableAppConfig(mod);
+  const persistent = await requestPersistentStorage();
+  setProgress({ text: await loadingMessage(mod, model, appConfig, persistent), progress: 0 });
+
   const created = new mod.MLCEngine({
+    appConfig,
     initProgressCallback: (report: { text: string; progress: number }) => {
       setProgress({ text: report.text, progress: report.progress });
     },
@@ -214,7 +282,10 @@ export const browserProvider: ChatProvider = {
         retryable: false,
       });
     }
-    return { detail: 'WebGPU available. The first message downloads the model once, then it is cached.' };
+    return {
+      detail:
+        'WebGPU available. The first message downloads the model once; after that it loads from this device\'s IndexedDB cache.',
+    };
   },
 };
 
@@ -230,11 +301,27 @@ export async function unloadBrowserModel(): Promise<void> {
   setProgress(null);
 }
 
-/** Removes downloaded weights from the browser cache. */
+/**
+ * Removes downloaded weights from the browser cache, so "Clear all data" can
+ * honestly promise to free the space. Both stores are cleared: the IndexedDB one
+ * this build uses, and the Cache API store earlier builds downloaded into. Every
+ * prebuilt ID is covered, not just the ones this registry lists, so weights left
+ * behind by an older model list go too.
+ */
 export async function purgeBrowserModelCache(): Promise<void> {
   try {
     const mod = await loadModule();
-    await mod.deleteModelAllInfoInCache('Llama-3.2-1B-Instruct-q4f16_1-MLC');
+    const durable = durableAppConfig(mod);
+    const ids = new Set<string>([
+      ...mod.prebuiltAppConfig.model_list.map((record) => record.model_id),
+      ...MODELS.filter((m) => m.provider === 'browser').map((m) => m.id),
+    ]);
+    await Promise.all(
+      [...ids].flatMap((id) => [
+        mod.deleteModelAllInfoInCache(id, durable).catch(() => {}),
+        mod.deleteModelAllInfoInCache(id).catch(() => {}),
+      ]),
+    );
   } catch {
     /* cache API unavailable or nothing cached */
   }

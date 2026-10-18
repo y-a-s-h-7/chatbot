@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { cn, formatContextWindow } from '../../lib/utils';
+import { cn, formatContextWindow, formatDataSize } from '../../lib/utils';
 import { getAvailability, modelKey, PROVIDERS, PROVIDER_ORDER } from '../../providers';
 import type { ModelEntry } from '../../providers/models';
 import type { ProviderId } from '../../providers/providers';
@@ -18,6 +18,24 @@ interface ModelPickerProps {
 }
 
 const STATUS_ORDER: Record<string, number> = { ready: 0, connect: 1, 'needs-key': 2, unavailable: 3 };
+
+/**
+ * The one-line summary under a model's name: how much context it has, what it is
+ * good at, and — for models that run here — what it costs in disk and memory.
+ * For an in-browser model the raw weight ID is replaced by that cost, which is
+ * the only part of it a person choosing a model can act on.
+ */
+function describeModel(entry: ModelEntry): string {
+  return [
+    formatContextWindow(entry.contextWindow),
+    entry.tags?.slice(0, 3).join(' · '),
+    entry.downloadMB ? `↧ ${formatDataSize(entry.downloadMB)}` : '',
+    entry.memoryMB ? `${formatDataSize(entry.memoryMB)} RAM` : '',
+    !entry.downloadMB && entry.id !== entry.label ? entry.id : '',
+  ]
+    .filter(Boolean)
+    .join('  ·  ');
+}
 
 export function ModelPicker({ open, onClose, onNeedsCredential }: ModelPickerProps) {
   const [query, setQuery] = useState('');
@@ -172,11 +190,7 @@ export function ModelPicker({ open, onClose, onNeedsCredential }: ModelPickerPro
                       <span className="truncate text-sm font-medium text-fg">{entry.label}</span>
                       {isActive && <Badge tone="accent">current</Badge>}
                     </span>
-                    <span className="mt-0.5 block truncate text-[11px] text-muted">
-                      {[formatContextWindow(entry.contextWindow), entry.tags?.slice(0, 3).join(' · '), entry.id !== entry.label ? entry.id : '']
-                        .filter(Boolean)
-                        .join('  ·  ')}
-                    </span>
+                    <span className="mt-0.5 block truncate text-[11px] text-muted">{describeModel(entry)}</span>
                   </span>
                   <Badge tone={availability.status === 'ready' ? 'success' : 'muted'} className="mt-0.5 shrink-0">
                     {availability.badge}

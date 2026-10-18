@@ -123,6 +123,11 @@ function freeProxyPlugin(env: Record<string, string>): Plugin {
 export default defineConfig(({ mode }) => {
   const env = { ...process.env, ...loadEnv(mode, rootDir, '') } as Record<string, string>;
   return {
+    // Relative asset URLs, so the very same `dist/` folder works from a web
+    // server, from `file://`, and from the Electron `app://` scheme. Absolute
+    // `/assets/...` paths break the moment the document is not served from a
+    // site root, which is exactly what a desktop shell does.
+    base: './',
     plugins: [react(), tailwindcss(), freeProxyPlugin(env), cspPlugin()],
     resolve: {
       alias: { '@': path.resolve(rootDir, 'src') },
@@ -143,6 +148,11 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return;
+            // The native shell SDKs are only ever reached through a dynamic
+            // import, and only on a device that is running inside one. Forcing
+            // them into `vendor` would put Capacitor in the first paint of the
+            // web build, so they are left for Rollup to keep as async chunks.
+            if (id.includes('@capacitor') || id.includes('@aparajita')) return;
             if (id.includes('@mlc-ai')) return 'webllm';
             if (id.includes('highlight.js')) return 'highlighter';
             if (id.includes('react-markdown') || id.includes('remark') || id.includes('micromark') || id.includes('mdast') || id.includes('hast')) {
@@ -156,7 +166,11 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
-      strictPort: false,
+      // Fail loudly instead of quietly moving to 5174. Browser storage — saved
+      // chats, keys and the in-browser model cache — is keyed by origin, so a
+      // silent port change looks like total data loss and forces a fresh
+      // multi-hundred-megabyte model download.
+      strictPort: true,
     },
     preview: {
       port: 4173,

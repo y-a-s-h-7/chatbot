@@ -3,6 +3,8 @@
  * translation the UI shows. Raw JSON and stack traces never reach the screen.
  */
 
+import { isNativeShell } from '../lib/native/platform';
+
 export type ErrorCode =
   | 'auth'
   | 'forbidden'
@@ -143,10 +145,20 @@ export function fromResponse(status: number, bodyText: string, providerLabel: st
 
 export function networkError(providerLabel: string): ProviderError {
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (offline) {
+    return new ProviderError('network', 'You appear to be offline. Reconnect and retry — your message is still here.', {
+      providerLabel,
+      retryable: true,
+    });
+  }
+  // In the desktop and Android shells the request does not go through the page,
+  // so CORS is not a candidate cause and saying so would send the user hunting
+  // for a problem that cannot exist there.
+  const native = isNativeShell();
   return new ProviderError(
     'network',
-    offline
-      ? 'You appear to be offline. Reconnect and retry — your message is still here.'
+    native
+      ? `Could not reach **${providerLabel}**. The usual causes are a dropped connection, a VPN or proxy in the way, or a local runtime that is not running.`
       : `Could not reach **${providerLabel}**. The usual causes are a dropped connection, a VPN or proxy in the way, an ad-blocking extension, or the provider blocking browser requests (CORS). A local runtime also has to be running and allowing this page's origin.`,
     { providerLabel, retryable: true },
   );

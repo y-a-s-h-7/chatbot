@@ -5,6 +5,7 @@
  */
 
 import { getCredentials, getKey, requireKey } from '../lib/credentials';
+import { shellFetch } from '../lib/native/http';
 import { configError, fromResponse, toProviderError } from './errors';
 import { toChatCompletions } from './messages';
 import { PROVIDERS, type ProviderId } from './providers';
@@ -159,7 +160,7 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): ChatProv
       if (config.id === 'free-proxy') {
         let res: Response;
         try {
-          res = await fetch(`${base}/health`, { signal });
+          res = await shellFetch(`${base}/health`, { signal });
         } catch (err) {
           throw toProviderError(err, label);
         }
@@ -172,7 +173,7 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): ChatProv
       }
       let res: Response;
       try {
-        res = await fetch(`${base}/models`, { headers: authHeaders(), signal });
+        res = await shellFetch(`${base}/models`, { headers: authHeaders(), signal });
       } catch (err) {
         throw toProviderError(err, label);
       }

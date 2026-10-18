@@ -24,6 +24,7 @@ Open http://localhost:5173. That is the whole setup.
 | **Honest model picker** | `⌘/Ctrl + K`. Grouped by provider, searchable, keyboard-navigable, badged **Free / Key needed / Connected**. Picking a model that needs a key opens the key dialog inline instead of failing. |
 | **Streaming you can stop** | Tokens are batched per animation frame, so the UI stays at 60fps. Stop, regenerate, edit & resend, copy, delete. |
 | **Local-first** | Conversations in IndexedDB, preferences in localStorage. Reload restores instantly. Nothing is uploaded except the prompt itself, to the provider you chose. |
+| **Memory you can see** | Start a message with *remember that …* and the app stores the fact in this browser, then adds it to every later request. Review, edit, delete or switch it off in Settings → Memory. |
 | **Polished** | Light/dark/system, markdown with lazily-loaded syntax highlighting, virtualized long chats, a soft aura that breathes while the model streams, full keyboard access, and a strict CSP. |
 
 ---
@@ -31,10 +32,12 @@ Open http://localhost:5173. That is the whole setup.
 ## The three access modes, and how honest each one is
 
 1. **Free, no account.** Two ways, both labelled clearly:
-   - *This browser* — a small open model (Llama 3.2 1B, Qwen2.5 1.5B/3B) running on your
-     GPU through WebLLM. Needs WebGPU (Chrome/Edge 113+ on desktop) and a one-time
-     download of roughly 0.7–1.8 GB. Weights are cached by the browser afterwards.
-     Nothing leaves the device.
+   - *This browser* — a small open model running on your GPU through WebLLM, from
+     SmolLM2 360M up to Llama 3.2 3B (Qwen2.5 0.5B/1.5B and Gemma 2 2B included). Needs
+     WebGPU (Chrome/Edge 113+ on desktop) and a one-time download of 0.2–1.8 GB; the
+     picker lists each model's download and GPU-memory cost, smallest first, so a
+     low-memory machine can pick its rung. Weights land in an IndexedDB cache that the
+     app asks the browser to keep. Nothing leaves the device.
    - *Free tier (shared)* — a rate-limited free model served by whoever deployed this
      app. See [The free tier](#the-free-tier). If the deployment has no server key, the
      badge says **Not deployed** rather than pretending.
@@ -188,8 +191,35 @@ frame; messages are memoized; markdown, the syntax highlighter and the WebLLM ru
 are all lazy chunks; conversations render virtualized past 40 messages; auto-scroll
 coalesces its writes and stops the moment you scroll up.
 
-Initial payload is about **135 kB gzipped** (React, app code, CSS). Markdown (33 kB),
+Initial payload is about **140 kB gzipped** (React, app code, CSS). Markdown (33 kB),
 highlight.js (51 kB) and WebLLM (2.1 MB, only on the in-browser model path) load later.
+
+---
+
+## Memory
+
+LLMs have no memory between chats, and a 1B model is bad at deciding what is worth
+keeping, so the app only stores a fact when you ask for it in so many words:
+
+- **Saving.** A message starting with *remember that …* (or *remember:*, *note that*,
+  *don't forget that*, *remember my …*) is read locally, before the request is sent.
+  The extracted fact goes to `localStorage` under `chatbot.memory.v1`. Nothing else is
+  ever saved automatically, and nothing is inferred.
+- **Using it.** Every request carries a short system-prompt section: the ground rules
+  ("you have no memory of your own; never say you will remember something") plus
+  *Known facts about the user*. So "what is my name?" is answered from the saved list
+  rather than invented. The same rules are sent when memory is off, which is what stops
+  a model promising to remember things the app has stored nowhere.
+- **Keeping it small.** Facts are capped at 240 characters each, 40 in total, and at
+  most 600 characters (roughly 150 tokens) go into any one request — the newest facts
+  first, since a 4K-context in-browser model has no room for more.
+- **Refusing secrets.** A fact that looks like a password, API key, card or ID number is
+  rejected and the app says so. Memory is for preferences and facts, not credentials.
+- **Removing it.** Settings → Memory lists every fact for editing or deletion, has a
+  *Use memory* switch, and *Forget everything*. **Clear all data** clears it too.
+
+Saved facts are sent to whichever model provider you are using, in the system prompt,
+so treat them as visible to that provider.
 
 ---
 
@@ -200,20 +230,28 @@ highlight.js (51 kB) and WebLLM (2.1 MB, only on the in-browser model path) load
   words, and shows a masked form of the stored key.
 - Keys are sent only to the provider that issued them, in the request header that
   provider expects.
-- Conversations and messages stay in IndexedDB on this device.
+- Conversations and messages stay in IndexedDB on this device, and saved memory facts
+  in `localStorage`. Both are sent to your chosen provider only as part of the prompt
+  they belong to.
 - No analytics, no telemetry, no error reporting, no third-party scripts. The only
   external requests are provider APIs, the WebLLM weight CDN, and Google Fonts
   (remove the `<link>` in `index.html` for a fully offline-ui build).
 - Strict CSP (in `vite.config.ts`, mirrored in `public/_headers` and `vercel.json`),
   `nosniff`, `frame-ancestors 'none'`, and a restrictive `Permissions-Policy`.
 - **Clear all data** in Settings → Data & privacy removes conversations, keys,
-  preferences and the cached browser-model weights.
+  preferences, saved facts, and the cached browser-model weights (both the IndexedDB
+  cache this version uses and the Cache API store earlier versions downloaded into).
+- `npm run dev` pins port 5173 (`server.strictPort`). Browser storage is per-origin, so
+  silently starting on another port would look like total data loss and re-download the
+  model; the dev server fails loudly instead.
 
 ---
 
 ## Testing
 
 ```bash
+npm test            # unit tests: stream buffering, error mapping, message
+                    # normalisation, credential policy, memory extraction
 npm run mock        # a local OpenAI-compatible provider on 127.0.0.1:11434
 ```
 
@@ -243,11 +281,52 @@ light and dark, and no console errors in the production build.
 
 ```bash
 npm run build      # typecheck + production bundle in dist/
+
+npm run build:desktop   # Electron build (free tier off) → dist/
+npm run build:win       # NSIS installer + portable .exe → release/
+npm run build:android   # debug .apk (+ signed .aab when set up) → android/app/build/outputs/
+npm run cap:sync         # web build + copy into android/
+npm run electron:dev    # dev mode, Electron window against the Vite server
 ```
 
-Static host: publish `dist/`. Add the proxy function if you want the free tier
-(Vercel does this automatically via `api/chat.ts`). Remember to add any extra provider
-origin to the CSP in both `vite.config.ts` and `public/_headers`.
+### Desktop (Windows, Electron)
+
+Wrap the same `dist/` folder in an Electron window.
+
+```powershell
+npm install
+npm run build:win
+```
+
+Artifacts end up in `release/`:
+
+- `Chatbot-1.0.0-x64.exe` — NSIS installer (Start Menu, desktop shortcut, registers the `chatbot://` protocol so sign-in can return to the app).
+- `Chatbot-1.0.0-portable.exe` — single-file portable build; nothing installed.
+
+How requests reach Gemini, Anthropic and the other providers: they go through the main process over IPC, so there is no CORS to satisfy and the system proxy is honoured. Streaming responses come back chunk by chunk over the IPC bridge. API keys are stored with Electron's `safeStorage` (DPAPI on Windows), so they never land in plaintext anywhere. Sign-in leaves the app for the system browser and comes back over `chatbot://oauth/callback`, because an embedded webview would be blocked.
+
+See [`docs/native-builds.md`](docs/native-builds.md) for the exact prerequisites, how to run the dev server, how to sign the installer, the test checklist and the known limitations.
+
+### Android (Capacitor)
+
+The same `dist/` folder, inside an Android WebView. Nothing about the React app changes.
+
+```powershell
+npm run build:android
+```
+
+Artifacts:
+
+- `android/app/build/outputs/apk/debug/app-debug.apk` — debug APK to install on a phone for testing.
+- `android/app/build/outputs/bundle/release/app-release.aab` — signed release bundle, only produced once a signing key exists.
+
+Safe areas, the on-screen keyboard, the system back button and the splash screen are all handled. API keys go into the Android Keystore through a Capacitor secure-storage plugin, and sign-in uses Custom Tabs and a `chatbot://oauth/callback` intent filter. Where the WebView's origin is refused, requests fall back to Capacitor's native HTTP, which is buffered, so those replies are revealed frame by frame so the UI still streams.
+
+The in-app browser plugin is deliberately **not** enabled — the web build loads WebLLM's hundreds of megabytes of models through the page's own fetch, and routing that through a bridging plugin would buffer each weight download into memory. Only the few API calls that genuinely need it go through native HTTP, and only the ones that need it.
+
+**Capacitor 7.6.9 generates Java 21 source/target** (`VERSION_21`), so the Android Studio section's JDK catch is 21, not 17. The machine needs `JAVA_HOME` pointing at JBR 21 (or any JDK 21) for `npm run build:android`. JDK 17 will refuse to compile the project.
+
+See [`docs/native-builds.md`](docs/native-builds.md) for the signing key, the version mapping and the test checklist.
 
 ## Not in v1
 

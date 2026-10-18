@@ -1,12 +1,26 @@
 import { create } from 'zustand';
 import { setCredentials } from '../lib/credentials';
 import { applyTheme, readStoredTheme, type ThemeMode } from '../lib/theme';
+import {
+  forgetAllRememberedKeys,
+  forgetRememberedKey,
+  loadRememberedKeys,
+  rememberKey,
+  secureStorageLabel,
+} from '../lib/native/secrets';
+import { isNativeShell } from '../lib/native/platform';
 import type { ProviderId } from '../providers/providers';
+import { toastError } from './toastStore';
 
 /**
- * Preferences persist to localStorage. API keys only persist when the user ticks
- * "Remember on this device" for that provider — otherwise they live in this
- * in-memory store and are gone the moment the tab closes.
+ * Preferences live in localStorage. API keys do not: they are either kept in
+ * memory for this session only, or handed to the platform secret store — the OS
+ * credential store in the desktop app, the Android Keystore on Android, and
+ * (honestly, because a browser has nothing better) localStorage on the web.
+ *
+ * The preferences blob deliberately has no key material in it. Older builds
+ * wrote remembered keys into it, so `hydrate()` moves any it finds into the
+ * secret store and rewrites the blob without them.
  */
 
 const PREFS_KEY = 'chatbot.settings.v1';
@@ -23,19 +37,23 @@ export interface PersistedSettings {
   autoScroll: boolean;
   customBaseUrl: string;
   ollamaBaseUrl: string;
-  /** providerId -> key, ONLY for providers the user chose to remember. */
-  rememberedKeys: Partial<Record<ProviderId, string>>;
+  /** providerId -> the user asked for this key to survive a restart. */
+  remembered: Partial<Record<ProviderId, boolean>>;
   connected: Partial<Record<ProviderId, boolean>>;
+  /** @deprecated written by builds before the secret store existed; read once. */
+  rememberedKeys?: Partial<Record<ProviderId, string>>;
 }
 
 export interface SettingsState extends PersistedSettings {
   hydrated: boolean;
-  /** In-memory keys, including the remembered ones. */
+  /** True once remembered keys have been read from the platform secret store. */
+  keysReady: boolean;
+  /** In-memory keys for this session, including the remembered ones. */
   keys: Partial<Record<ProviderId, string>>;
-  /** providerId -> is the key persisted? */
+  /** providerId -> is the key persisted on this device? */
   remember: Partial<Record<ProviderId, boolean>>;
 
-  hydrate(): void;
+  hydrate(): Promise<void>;
   setTheme(theme: ThemeMode): void;
   setModel(modelId: string, source?: 'user' | 'auto'): void;
   setTemperature(value: number): void;
@@ -43,9 +61,9 @@ export interface SettingsState extends PersistedSettings {
   setSidebarCollapsed(value: boolean): void;
   setAutoScroll(value: boolean): void;
   setBaseUrl(provider: ProviderId, value: string): void;
-  setKey(provider: ProviderId, key: string, remember: boolean): void;
-  clearKey(provider: ProviderId): void;
-  setRemember(provider: ProviderId, remember: boolean): void;
+  setKey(provider: ProviderId, key: string, remember: boolean): Promise<void>;
+  clearKey(provider: ProviderId): Promise<void>;
+  setRemember(provider: ProviderId, remember: boolean): Promise<void>;
   setConnected(provider: ProviderId, connected: boolean): void;
   resetEverything(): void;
 }
@@ -62,7 +80,7 @@ const DEFAULTS = {
   autoScroll: true,
   customBaseUrl: '',
   ollamaBaseUrl: '',
-  rememberedKeys: {},
+  remembered: {},
   connected: {},
 };
 
@@ -81,7 +99,7 @@ function readPersisted(): PersistedSettings {
     return {
       ...fallback,
       ...parsed,
-      rememberedKeys: parsed.rememberedKeys ?? {},
+      remembered: parsed.remembered ?? {},
       connected: parsed.connected ?? {},
     };
   } catch {
@@ -89,6 +107,7 @@ function readPersisted(): PersistedSettings {
   }
 }
 
+/** Everything in the prefs blob except keys — which are never written here. */
 function persist(state: SettingsState): void {
   const payload: PersistedSettings = {
     version: 1,
@@ -101,23 +120,20 @@ function persist(state: SettingsState): void {
     autoScroll: state.autoScroll,
     customBaseUrl: state.customBaseUrl,
     ollamaBaseUrl: state.ollamaBaseUrl,
-    rememberedKeys: Object.fromEntries(
-      Object.entries(state.keys).filter(([id]) => state.remember[id as ProviderId]),
-    ) as Partial<Record<ProviderId, string>>,
+    remembered: state.remember,
     connected: state.connected,
   };
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(payload));
   } catch {
-    /* storage blocked: keys stay in memory only, which is the safe fallback */
+    /* storage blocked: preferences stay in memory, which is the safe fallback */
   }
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => {
-  const commit = (patch: Partial<SettingsState>) => {
-    set(patch as SettingsState);
+  /** Push the credentials adapters read from, so they never import this store. */
+  const syncCredentials = () => {
     const state = get();
-    persist(state);
     setCredentials({
       keys: state.keys,
       connected: state.connected,
@@ -126,34 +142,82 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     });
   };
 
+  const commit = (patch: Partial<SettingsState>) => {
+    set(patch as SettingsState);
+    persist(get());
+    syncCredentials();
+  };
+
+  /**
+   * Moves any keys that older builds left in the preferences blob into the
+   * platform secret store, then merges whatever the store holds into memory.
+   */
+  async function loadKeys(legacy: Partial<Record<ProviderId, string>>): Promise<void> {
+    let stored: Partial<Record<ProviderId, string>> = {};
+    try {
+      stored = await loadRememberedKeys();
+    } catch {
+      stored = {};
+    }
+
+    const recovered: Partial<Record<ProviderId, string>> = {};
+    for (const [id, value] of Object.entries(legacy ?? {})) {
+      if (!value) continue;
+      const provider = id as ProviderId;
+      if (stored[provider]) continue;
+      if (await rememberKey(provider, value)) recovered[provider] = value;
+    }
+
+    const merged = { ...stored, ...recovered };
+    const remember = { ...get().remember };
+    for (const id of Object.keys(merged)) remember[id as ProviderId] = true;
+
+    // A key pasted while this was loading wins, but it is not persisted until
+    // the user says so.
+    const keys = { ...merged, ...get().keys };
+    set({ keys, remember, keysReady: true });
+    persist(get());
+    syncCredentials();
+  }
+
+  /** Writes a key to (or removes it from) the platform secret store. */
+  async function persistKey(provider: ProviderId, key: string | null): Promise<boolean> {
+    if (key === null) {
+      await forgetRememberedKey(provider);
+      return true;
+    }
+    return rememberKey(provider, key);
+  }
+
   return {
     version: 1 as const,
     ...DEFAULTS,
     hydrated: false,
+    keysReady: false,
     keys: {},
     remember: {},
 
-    hydrate() {
+    async hydrate() {
       if (get().hydrated) return;
       const persisted = readPersisted();
-      const keys = { ...(persisted.rememberedKeys ?? {}) };
-      const remember: Partial<Record<ProviderId, boolean>> = {};
-      for (const id of Object.keys(keys)) remember[id as ProviderId] = true;
+      const legacyKeys = persisted.rememberedKeys ?? {};
+      delete persisted.rememberedKeys;
+
       set({
         ...persisted,
-        keys,
-        remember,
+        keys: {},
+        remember: { ...persisted.remembered },
         hydrated: true,
         theme: readStoredTheme(),
       });
-      const state = get();
-      setCredentials({
-        keys: state.keys,
-        connected: state.connected,
-        customBaseUrl: state.customBaseUrl,
-        ollamaBaseUrl: state.ollamaBaseUrl,
-      });
-      applyTheme(state.theme);
+      syncCredentials();
+      applyTheme(get().theme);
+
+      // Rewrite the blob immediately: the keys it used to carry are now either
+      // in the secret store or in memory, and a failed read must not leave them
+      // sitting in localStorage for another build to pick up.
+      persist(get());
+      await loadKeys(legacyKeys);
     },
 
     setTheme(theme) {
@@ -187,14 +251,27 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       else if (provider === 'ollama') commit({ ollamaBaseUrl: clean });
     },
 
-    setKey(provider, key, remember) {
+    async setKey(provider, key, remember) {
+      const trimmed = key.trim();
       commit({
-        keys: { ...get().keys, [provider]: key.trim() },
+        keys: { ...get().keys, [provider]: trimmed },
         remember: { ...get().remember, [provider]: remember },
       });
+      if (!remember) {
+        await persistKey(provider, null);
+        return;
+      }
+      const ok = await persistKey(provider, trimmed);
+      if (ok) return;
+      // Never claim a key is remembered when the platform store refused it.
+      commit({ remember: { ...get().remember, [provider]: false } });
+      toastError(
+        'Not saved on this device',
+        `This device would not give the app access to ${secureStorageLabel()}, so the key is only in memory for this session.`,
+      );
     },
 
-    clearKey(provider) {
+    async clearKey(provider) {
       const keys = { ...get().keys };
       const remember = { ...get().remember };
       const connected = { ...get().connected };
@@ -202,10 +279,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       delete remember[provider];
       delete connected[provider];
       commit({ keys, remember, connected });
+      await persistKey(provider, null);
     },
 
-    setRemember(provider, remember) {
+    async setRemember(provider, remember) {
       commit({ remember: { ...get().remember, [provider]: remember } });
+      const key = get().keys[provider];
+      if (!remember) {
+        await persistKey(provider, null);
+        return;
+      }
+      if (!key) return;
+      const ok = await persistKey(provider, key);
+      if (!ok) {
+        commit({ remember: { ...get().remember, [provider]: false } });
+        toastError('Not saved on this device', `The app could not write to ${secureStorageLabel()}.`);
+      }
     },
 
     setConnected(provider, connected) {
@@ -213,14 +302,32 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     },
 
     resetEverything() {
-      const cleared = { version: 1 as const, ...DEFAULTS, keys: {}, remember: {}, connected: {}, modelSource: 'default' as const };
+      const cleared = {
+        version: 1 as const,
+        ...DEFAULTS,
+        keys: {},
+        remember: {},
+        connected: {},
+        modelSource: 'default' as const,
+      };
       commit(cleared as Partial<SettingsState>);
       try {
         localStorage.removeItem(PREFS_KEY);
       } catch {
         /* nothing to remove */
       }
+      void forgetAllRememberedKeys();
       applyTheme('system');
     },
   };
 });
+
+/** Where a remembered key would be stored here — for Settings copy. */
+export function keyStorageLabel(): string {
+  return secureStorageLabel();
+}
+
+/** True when the app is running inside the desktop or Android shell. */
+export function isDesktopOrMobileApp(): boolean {
+  return isNativeShell();
+}
