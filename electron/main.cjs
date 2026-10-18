@@ -24,6 +24,7 @@
 
 const { app, BrowserWindow, ipcMain, net, protocol, safeStorage, screen, session, shell } = require('electron');
 const fs = require('node:fs');
+const http = require('node:http');
 const path = require('node:path');
 const { pathToFileURL, URL } = require('node:url');
 const { createWindowState } = require('./lib/window-state.cjs');
@@ -89,56 +90,61 @@ function deliverRedirect(url) {
 // the renderer. The renderer asks for it through `electronLoopbackRedirect()`.
 // ---------------------------------------------------------------------------
 
-async function openLoopbackListener() {
-  let port = 59132;
-  for (let attempt = 0; attempt < 128; attempt += 1) {
-    try {
-      const listener = await net.createServer().listen({ host: '127.0.0.1', port });
-      loopbackPort = port;
-      return listener;
-    } catch {
-      port = 59132 + attempt;
-    }
-  }
-  throw new Error('Could not open a loopback listener on 127.0.0.1');
-}
-
 function startLoopbackListener() {
   if (loopbackServer) return;
-  loopbackServer = net.createServer((connection) => {
-    const chunks: Uint8Array[] = [];
-    connection.on('data', (chunk: Buffer) => chunks.push(new Uint8Array(chunk)));
-    connection.on('end', () => {
-      const text = Buffer.concat(chunks).toString('utf8').split('\n')[0];
-      loopbackServer?.close().catch(() => {});
-      loopbackServer = null;
-      if (!text) return;
-      // The OpenRouter browser redirect lands as an HTTP request; we do not
-      // respond to it (the browser is already showing the provider's page), we
-      // just capture the URL and forward it to the renderer.
-      let target = text;
-      if (target.startsWith(OAUTH_LOCALHOST)) {
-        target = `${target.split('?')[0]}?code=from_loopback&state=_state`;
-      }
+  try {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Connection': 'close',
+      });
+      res.end(`<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Authentication Successful</title></head>
+<body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #f8fafc;">
+  <div style="text-align: center; padding: 2rem; background: #1e293b; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+    <h2 style="margin-top: 0; color: #38bdf8;">Authentication Successful</h2>
+    <p style="color: #94a3b8;">You can close this tab and return to the Chatbot application.</p>
+  </div>
+  <script>setTimeout(() => window.close(), 1500);</script>
+</body>
+</html>`);
+
+      const target = `http://127.0.0.1:${loopbackPort}${req.url || ''}`;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('oauth:redirect', target);
+        focusMainWindow();
       }
     });
-    loopbackServer.listen(loopbackPort, '127.0.0.1');
-    mainWindow?.webContents.send('oauth:loopback-port', loopbackPort);
-  });
-  void openLoopbackListener().then((listener) => {
-    loopbackServer = listener;
-  }).catch(() => {
-    // If we could not open a loopback listener, try to fall back to the custom
-    // scheme. That may still work; OpenRouter's docs are silent on custom schemes.
-    // We do nothing here — the existing `chatbot://` deep link is already wired.
-  });
+
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (address && typeof address === 'object') {
+        loopbackPort = address.port;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('oauth:loopback-port', loopbackPort);
+        }
+      }
+    });
+
+    server.on('error', (err) => {
+      console.warn('Loopback server error:', err);
+      closeLoopbackListener();
+    });
+
+    loopbackServer = server;
+  } catch (err) {
+    console.warn('Could not start loopback listener:', err);
+  }
 }
 
 function closeLoopbackListener() {
   if (loopbackServer) {
-    loopbackServer.close().catch(() => {});
+    try {
+      loopbackServer.close();
+    } catch {
+      /* ignore */
+    }
     loopbackServer = null;
   }
   loopbackPort = 0;
@@ -451,17 +457,10 @@ function registerOAuthBridge() {
   // When the renderer asks for the loopback redirect URI, pick a port now if we
   // have not already, and tell the renderer the chosen port.
   ipcMain.handle('oauth:loopback-port', async () => {
-    if (!loopbackServer && !loopbackPort) {
-      try {
-        const listener = await net.createServer().listen({ host: '127.0.0.1', port: 0 });
-        loopbackServer = listener;
-        loopbackPort = (listener.address() as { port: number }).port;
-      } catch {
-        // If we cannot open a loopback port, we silently fail here; the renderer
-        // will fall back to the custom scheme.
-      }
+    if (!loopbackPort) {
+      startLoopbackListener();
     }
-    return loopbackPort ? `http://127.0.0.1:${loopbackPort}` : undefined;
+    return loopbackPort || undefined;
   });
 
   // The renderer sends us a request to open the browser with the loopback
